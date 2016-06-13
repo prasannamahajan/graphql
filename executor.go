@@ -732,7 +732,12 @@ func completeObjectValue(eCtx *ExecutionContext, returnType *Object, fieldASTs [
 
 // completeLeafValue complete a leaf value (Scalar / Enum) by serializing to a valid value, returning nil if serialization is not possible.
 func completeLeafValue(returnType Leaf, result interface{}) interface{} {
-	serializedResult := returnType.Serialize(result)
+	var serializedResult interface{}
+	if reflect.TypeOf(result).Kind() == reflect.Ptr {
+		serializedResult = returnType.Serialize(reflect.ValueOf(result).Elem().Interface())
+	} else {
+		serializedResult = returnType.Serialize(result)
+	}
 	if isNullish(serializedResult) {
 		return nil
 	}
