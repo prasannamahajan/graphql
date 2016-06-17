@@ -747,6 +747,10 @@ func completeLeafValue(returnType Leaf, result interface{}) interface{} {
 // completeListValue complete a list value by completing each item in the list with the inner type
 func completeListValue(eCtx *ExecutionContext, returnType *List, fieldASTs []*ast.Field, info ResolveInfo, result interface{}) interface{} {
 	resultVal := reflect.ValueOf(result)
+	if resultVal.Kind() == reflect.Ptr {
+		resultVal = resultVal.Elem()
+	}
+
 	parentTypeName := ""
 	if info.ParentType != nil {
 		parentTypeName = info.ParentType.Name()
@@ -791,6 +795,46 @@ func defaultResolveTypeFn(p ResolveTypeParams, abstractType Abstract) *Object {
 	return nil
 }
 
+func fieldResolve(sourceVal reflect.Value, p ResolveParams) interface{} {
+	// find field based on struct's json tag
+	// we could potentially create a custom `graphql` tag, but its unnecessary at this point
+	// since graphql speaks to client in a json-like way anyway
+	// so json tags are a good way to start with
+	anonymousFields := []reflect.Value{}
+	for i := 0; i < sourceVal.NumField(); i++ {
+		valueField := sourceVal.Field(i)
+		typeField := sourceVal.Type().Field(i)
+		// try matching the field name first
+		if typeField.Name == p.Info.FieldName {
+			return valueField.Interface()
+		}
+
+		//try nested struct
+		if typeField.Anonymous {
+			anonymousFields = append(anonymousFields, valueField)
+		}
+
+		tag := typeField.Tag
+		jsonTag := tag.Get("json")
+		jsonOptions := strings.Split(jsonTag, ",")
+		if len(jsonOptions) == 0 {
+			continue
+		}
+		if jsonOptions[0] != p.Info.FieldName {
+			continue
+		}
+		return valueField.Interface()
+	}
+	for _, valueField := range anonymousFields {
+		value := fieldResolve(valueField, p)
+		if value != nil {
+			return value
+		}
+	}
+
+	return nil
+}
+
 // defaultResolveFn If a resolve function is not given, then a default resolve behavior is used
 // which takes the property of the source object of the same name as the field
 // and returns it as the result, or if it's a function, returns the result
@@ -805,29 +849,7 @@ func defaultResolveFn(p ResolveParams) (interface{}, error) {
 		return nil, nil
 	}
 	if sourceVal.Type().Kind() == reflect.Struct {
-		// find field based on struct's json tag
-		// we could potentially create a custom `graphql` tag, but its unnecessary at this point
-		// since graphql speaks to client in a json-like way anyway
-		// so json tags are a good way to start with
-		for i := 0; i < sourceVal.NumField(); i++ {
-			valueField := sourceVal.Field(i)
-			typeField := sourceVal.Type().Field(i)
-			// try matching the field name first
-			if typeField.Name == p.Info.FieldName {
-				return valueField.Interface(), nil
-			}
-			tag := typeField.Tag
-			jsonTag := tag.Get("json")
-			jsonOptions := strings.Split(jsonTag, ",")
-			if len(jsonOptions) == 0 {
-				continue
-			}
-			if jsonOptions[0] != p.Info.FieldName {
-				continue
-			}
-			return valueField.Interface(), nil
-		}
-		return nil, nil
+		return fieldResolve(sourceVal, p), nil
 	}
 
 	// try p.Source as a map[string]interface
