@@ -8,6 +8,7 @@ import (
 
 	"github.com/graphql-go/graphql/gqlerrors"
 	"github.com/graphql-go/graphql/language/ast"
+	"github.com/prasannamahajan/graphql-newrelic/relicconf"
 	"golang.org/x/net/context"
 )
 
@@ -24,6 +25,7 @@ type ExecuteParams struct {
 }
 
 func Execute(p ExecuteParams) (result *Result) {
+	fmt.Println("**** In Execute *****")
 	result = &Result{}
 
 	exeContext, err := buildExecutionContext(BuildExecutionCtxParams{
@@ -53,6 +55,7 @@ func Execute(p ExecuteParams) (result *Result) {
 		}
 	}()
 
+	fmt.Println("execContext.Operation", exeContext.Operation.GetOperation())
 	return executeOperation(ExecuteOperationParams{
 		ExecutionContext: exeContext,
 		Root:             p.Root,
@@ -155,6 +158,7 @@ func executeOperation(p ExecuteOperationParams) *Result {
 	if p.Operation.GetOperation() == ast.OperationTypeMutation {
 		return executeFieldsSerially(executeFieldsParams)
 	}
+	fmt.Println("executeOperation", operationType.Name())
 	return executeFields(executeFieldsParams)
 
 }
@@ -239,6 +243,7 @@ func executeFieldsSerially(p ExecuteFieldsParams) *Result {
 
 // Implements the "Evaluating selection sets" section of the spec for "read" mode.
 func executeFields(p ExecuteFieldsParams) *Result {
+	fmt.Println("in executeFields", p.ParentType)
 	if p.Source == nil {
 		p.Source = map[string]interface{}{}
 	}
@@ -255,6 +260,7 @@ func executeFields(p ExecuteFieldsParams) *Result {
 		finalResults[responseName] = resolved
 	}
 
+	fmt.Println("out executeFields")
 	return &Result{
 		Data:   finalResults,
 		Errors: p.ExecutionContext.Errors,
@@ -506,6 +512,16 @@ func resolveField(eCtx *ExecutionContext, parentType *Object, source interface{}
 	if fieldAST.Name != nil {
 		fieldName = fieldAST.Name.Value
 	}
+	if parentType.Name() == "Query" {
+		App := relicconf.GetRelicApp()
+		if App != nil {
+			txn := App.StartTransaction(fieldName, nil, nil)
+			fmt.Println("\tBegin transaction for", fieldName)
+			defer txn.End()
+			defer fmt.Println("\tEnd transaction for", fieldName)
+		}
+	}
+	fmt.Println("Processing", fieldName, parentType.Name())
 
 	fieldDef := getFieldDef(eCtx.Schema, parentType, fieldName)
 	if fieldDef == nil {
@@ -536,7 +552,6 @@ func resolveField(eCtx *ExecutionContext, parentType *Object, source interface{}
 	}
 
 	var resolveFnError error
-
 	result, resolveFnError = resolveFn(ResolveParams{
 		Source:  source,
 		Args:    args,
@@ -549,6 +564,7 @@ func resolveField(eCtx *ExecutionContext, parentType *Object, source interface{}
 	}
 
 	completed := completeValueCatchingError(eCtx, returnType, fieldASTs, info, result)
+	fmt.Println("Result is", completed)
 	return completed, resultState
 }
 
