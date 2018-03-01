@@ -8,6 +8,7 @@ import (
 
 	"github.com/graphql-go/graphql/gqlerrors"
 	"github.com/graphql-go/graphql/language/ast"
+	"github.com/nicksnyder/go-i18n/i18n"
 	"github.com/prasannamahajan/graphql-newrelic/relicconf"
 	"golang.org/x/net/context"
 )
@@ -479,6 +480,7 @@ type resolveFieldResultState struct {
 func resolveField(eCtx *ExecutionContext, parentType *Object, source interface{}, fieldASTs []*ast.Field) (result interface{}, resultState resolveFieldResultState) {
 	// catch panic from resolveFn
 	var returnType Output
+	var rootQuery bool
 	defer func() (interface{}, resolveFieldResultState) {
 		if r := recover(); r != nil {
 
@@ -508,7 +510,8 @@ func resolveField(eCtx *ExecutionContext, parentType *Object, source interface{}
 		fieldName = fieldAST.Name.Value
 	}
 
-	if parentType.Name() == "Query" {
+	if parentType.Name() == "Query" || parentType.Name() == "Mutation" {
+		rootQuery = true
 		App := relicconf.GetRelicApp()
 		if App != nil {
 			txn := App.StartTransaction(fieldName, nil, nil)
@@ -553,6 +556,10 @@ func resolveField(eCtx *ExecutionContext, parentType *Object, source interface{}
 	})
 
 	if resolveFnError != nil {
+		if rootQuery {
+			getText, _ := i18n.Tfunc("en_US")
+			resolveFnError = errors.New(getText(resolveFnError.Error()))
+		}
 		panic(gqlerrors.FormatError(resolveFnError))
 	}
 
